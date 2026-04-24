@@ -2,17 +2,18 @@
 
 from __future__ import annotations
 
+import csv
 import logging
 from pathlib import Path
 
 import typer
 from rich.console import Console
 
-from . import assets
+from . import analytics, assets
 from .agent.daily_brief import DailyBriefAgent, make_summarizer, run_daily_brief
 from .config import get_config
 from .db import DailyBrief, make_session_factory
-from .formatting import holdings_table, totals_table
+from .formatting import allocation_table, analyst_table, holdings_table, totals_table
 from .fx import fetch_fx_rates
 from .markets import classify_ticker
 from .news import cache_news, fetch_news
@@ -199,6 +200,69 @@ def cmd_assets() -> None:
     for kind in assets.AssetKind:
         h = assets.resolve(kind.value)
         console.print(f"- {kind.value}: {h.display_label} (multiplier={h.multiplier})")
+
+
+@app.command("allocation")
+def cmd_allocation(
+    by: str = typer.Option("asset_class", "--by", help="asset_class | market | currency | ticker"),
+) -> None:
+    """Show portfolio allocation breakdown."""
+    cfg = get_config()
+    provider = _make_provider()
+    with _make_session() as session:
+        positions = snapshot_positions(session, provider)
+    if not positions:
+        console.print("[dim]No holdings yet.[/dim]")
+        return
+    currencies = {p.holding.currency for p in positions} | {
+        p.quote.currency for p in positions if p.quote
+    }
+    fx = fetch_fx_rates(list(currencies), base=cfg.base_ccy)
+    dimension = (by or "asset_class").lower()
+    selector = {
+        "asset_class": analytics.by_asset_class,
+        "kind": analytics.by_asset_class,
+        "market": analytics.by_market,
+        "currency": analytics.by_currency,
+        "ticker": analytics.by_ticker,
+    }.get(dimension)
+    if selector is None:
+        console.print(f"[red]Unknown --by value: {by!r}.[/red] Try asset_class / market / currency / ticker.")
+        raise typer.Exit(2)
+    rows = selector(positions, fx)
+    console.print(allocation_table(rows, title=f"Allocation by {dimension}", base_ccy=cfg.base_ccy))
+
+
+@app.command("analysts")
+def cmd_analysts() -> None:
+    """Show current analyst recommendations / target prices for each holding."""
+    provider = _make_provider()
+    with _make_session() as session:
+        tickers = [h.ticker for h in list_holdings(session)]
+    if not tickers:
+        console.print("[dim]No holdings yet.[/dim]")
+        return
+    snapshots = {t: provider.get_analyst_snapshot(t) for t in tickers}
+    console.print(analyst_table(snapshots))
+
+
+_EXPORT_PATH_OPT = typer.Option(..., "--to", help="Path to write the CSV export.")
+
+
+@app.command("export")
+def cmd_export(to: Path = _EXPORT_PATH_OPT) -> None:
+    """Export current holdings as a CSV file."""
+    with _make_session() as session:
+        holdings = list_holdings(session)
+    if not holdings:
+        console.print("[dim]No holdings to export.[/dim]")
+        return
+    with to.open("w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(["ticker", "kind", "market", "quantity", "avg_cost", "currency", "notes"])
+        for h in holdings:
+            writer.writerow([h.ticker, h.kind, h.market, h.quantity, h.avg_cost, h.currency, h.notes or ""])
+    console.print(f"[green]Exported[/green] {len(holdings)} holdings → {to}")
 
 
 @app.command("tui")
