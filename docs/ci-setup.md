@@ -1,3 +1,10 @@
+# Setting up CI
+
+The OAuth app used in this environment doesn't have the `workflow` scope, so
+the CI config is documented here instead of being committed. Paste the YAML
+below into `.github/workflows/ci.yml` and push it yourself.
+
+```yaml
 name: CI
 
 on:
@@ -24,3 +31,4 @@ jobs:
         run: ruff check portfolio_manager tests
       - name: Tests
         run: pytest -q
+```
