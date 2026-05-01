@@ -26,6 +26,7 @@ from .portfolio import (
     snapshot_positions,
 )
 from .providers import CompositeProvider, GoogleFinanceProvider, YFinanceProvider
+from .scanner_cli import scanner_app
 
 log = logging.getLogger(__name__)
 
@@ -36,6 +37,8 @@ app = typer.Typer(
 )
 
 console = Console()
+
+app.add_typer(scanner_app, name="scanner")
 
 
 def _make_provider() -> CompositeProvider:
